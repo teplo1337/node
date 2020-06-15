@@ -1,21 +1,23 @@
 require('dotenv').config();
-
-const MicroMQ = require('micromq');
 const WebSocket = require('ws');
-const Keycloak = require('keycloak-connect');
 const Express = require('express');
 const session = require('express-session');
-
-const memoryStore = new session.MemoryStore();
+const rabbit = require('./modules/rabbit.module');
 const app = new Express();
 
-const keycloak = new Keycloak({
-  store: memoryStore
-});
+/**
+ * PROD / DEV MODE
+ */
+
+if (app.get('env') === 'production') {
+  sess.cookie.secure = true
+}
 
 /**
- * setup session
+ * SESSION
  */
+
+const memoryStore = new session.MemoryStore();
 
 const sess = {
   secret: '73b409b3-28b5-5827-906c-7937c952a884',
@@ -27,43 +29,31 @@ const sess = {
   }
 }
 
-/**
- * prod mode
- */
-
-if (app.get('env') === 'production') {
-  sess.cookie.secure = true
-}
-
 app.use(session(sess))
-app.use(keycloak.middleware());
 
 /**
- * setup rabit
+ * KEYCLOAK
  */
 
-const rabbitAMQPUrl = `amqp://${process.env.RABBITMQ_USER}:${process.env.RABBITMQ_PASSWORD}@${process.env.RABBITMQ_HOST}:${process.env.RABBITMQ_PORT}${process.env.RABBITMQ_VHOST}`;
+const KeycloakModule = require('./modules/keycloak.module');
 
-const microMQ = new MicroMQ({
-  name: 'notifications',
-  rabbit: {
-    url: rabbitAMQPUrl
-  },
-});
-const ws = new WebSocket.Server({
-  port: process.env.NOTIFY_WS_PORT,
-});
+app.use(KeycloakModule.getKeyCloak(memoryStore).middleware());
 
-const clients = new Map();
 
 /**
  * WS HANDLER
  */
 
+const clients = new Map();
+
+const ws = new WebSocket.Server({
+  port: process.env.NOTIFY_WS_PORT,
+});
+
 ws.on('connection', (connection) => {
-  connection.on('message', (data) => {
+  connection.on('message', (dataJSON) => {
     try {
-    console.log(data);
+      const data = JSON.parse(dataJSON);
       switch(data.message) {
         case 'connect' : connectHandler(data, connection);
       }
@@ -74,7 +64,27 @@ ws.on('connection', (connection) => {
 });
 
 const connectHandler = (data, connection) => {
-  clients.set(data.jwt, (clients.has(data.jwt) || []).push(connection));
+  const connections = clients.get(data.jwt) || [];
+  clients.set(data.jwt, [...connections, connection]);
+  console.log('connect handler data', clients);
+}
+
+const wsSendMessageHandler = function(content) {
+  const rabbitMsg = JSON.parse(content);
+  const { recipient, type } = rabbitMsg;
+  const connections = clients.get(recipient);
+
+  switch(rabbitMsg.type) {
+    case 'NOTIFICATION_NEW': sendToConnections(connections, content);
+      break;
+    case 'NOTIFICATION_READ': sendToConnections(connections, content);
+      break;
+  }
+};
+
+sendToConnections = (connections, data) => {
+  console.log('sendToConnections', connections, data);
+  connections.forEach(c => c.send(data));
 }
 
 /**
@@ -82,31 +92,18 @@ const connectHandler = (data, connection) => {
  */
 
 ws.on('close', (connection) => {
+  console.log(connection);
   const connections = clients.has(connection.jwt);
   connections = connections.filter(c => c !== connection);
   connection.close();
 });
 
+
 /**
  * RABBITMQ
  */
 
-microMQ.action('notify', (meta) => {
-  if (!meta.userId || !meta.text) {
-    return [400, { error: 'no user id' }];
-  }
-
-  const connections = clients.get(meta.userId);
-
-  if (!connections) {
-    return [404, { error: 'user not found' }];
-  }
-
-  connections.forEach(c => c.send(meta));
-  return { ok: true };
-});
-
-microMQ.start();
+rabbit.setup(wsSendMessageHandler);
 
 
-   
+
