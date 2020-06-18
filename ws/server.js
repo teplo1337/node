@@ -4,7 +4,7 @@ const Express = require('express');
 const session = require('express-session');
 const rabbit = require('./modules/rabbit.module');
 const app = new Express();
-
+const jwtDecode = require('jwt-decode');
 /**
  * PROD / DEV MODE
  */
@@ -36,8 +36,8 @@ app.use(session(sess))
  */
 
 const KeycloakModule = require('./modules/keycloak.module');
-
-app.use(KeycloakModule.getKeyCloak(memoryStore).middleware());
+const keycloak = KeycloakModule.getKeyCloak(memoryStore);
+app.use(keycloak.middleware());
 
 
 /**
@@ -50,31 +50,39 @@ const ws = new WebSocket.Server({
   port: process.env.NOTIFY_WS_PORT,
 });
 
+// TODO: добавить keycloak.protect()
+
 ws.on('connection', (connection) => {
   connection.on('message', (dataJSON) => {
     try {
-      const data = JSON.parse(dataJSON);
-      switch(data.message) {
-        case 'connect' : connectHandler(data, connection);
+      const meta = JSON.parse(dataJSON);
+      switch(meta.message) {
+        case 'connect' : connectHandler(meta.data, connection);
       }
     } catch(err) {
+      console.error(err);
       connection.close();
     }
   });
 });
 
 const connectHandler = (data, connection) => {
-  const connections = clients.get(data.jwt) || [];
-  clients.set(data.jwt, [...connections, connection]);
-  console.log('connect handler data', clients);
+  const { preferred_username } = jwtDecode(data.token);
+  console.log(preferred_username);
+
+  const connections = clients.get(preferred_username) || [];
+  if (!connections.find(c => c === connection)) {
+    clients.set(preferred_username, [...connections, connection]);
+  }
+  console.log('connect handler data', clients.get(preferred_username));
 }
 
 const wsSendMessageHandler = function(content) {
   const rabbitMsg = JSON.parse(content);
-  const { recipient, type } = rabbitMsg;
-  const connections = clients.get(recipient);
+  const { data, type } = rabbitMsg;
+  const connections = data && clients.get(data.recipient) || [];
 
-  switch(rabbitMsg.type) {
+  switch(type) {
     case 'NOTIFICATION_NEW': sendToConnections(connections, content);
       break;
     case 'NOTIFICATION_READ': sendToConnections(connections, content);
@@ -83,7 +91,7 @@ const wsSendMessageHandler = function(content) {
 };
 
 sendToConnections = (connections, data) => {
-  console.log('sendToConnections', connections, data);
+  console.log('sendToConnections', data);
   connections.forEach(c => c.send(data));
 }
 

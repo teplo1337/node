@@ -1,0 +1,25 @@
+version: "3.7"
+
+services:
+  ws:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.stage
+    command: ["node", "server.js"]
+    environment:
+        RABBITMQ_HOST: $STAGE_RABBITMQ_HOST
+        RABBITMQ_PORT: $STAGE_RABBITMQ_PORT
+        RABBITMQ_USER: $STAGE_RABBITMQ_USER
+        RABBITMQ_PASSWORD: $STAGE_RABBITMQ_PASSWORD
+        RABBITMQ_VHOST: $STAGE_RABBITMQ_VHOST
+        RABBITMQ_EXCHANGE: $STAGE_RABBITMQ_EXCHANGE_NOTIFICATION
+        RABBITMQ_QUEUE: $STAGE_RABBITMQ_QUEUE_NOTIFICATION
+        NOTIFY_WS_PORT: 3000
+    ports:
+      - 3000:3000
+    networks:
+      - nvi-test-network
+
+networks:
+  nvi-test-network:
+    external: true
