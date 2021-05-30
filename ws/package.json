@@ -17,6 +17,6 @@
     "express-session": "^1.17.1",
     "jwt-decode": "^2.2.0",
     "keycloak-connect": "^10.0.2",
-    "ws": "^7.3.0"
+    "ws": "^7.4.6"
   }
 }
